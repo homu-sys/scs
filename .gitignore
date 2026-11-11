@@ -1,0 +1,6 @@
+/target
+/dist
+/pkg
+*.pkg.tar.zst
+scs-*.tar.xz
+scs-*.tar.gz
