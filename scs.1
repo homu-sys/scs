@@ -1,0 +1,121 @@
+.TH SCS 1 "2026-11-11" "scs 0.2.0" "User Commands"
+.SH NAME
+scs \- a very cool TUI clock
+.SH SYNOPSIS
+.B scs
+.RI [ options ]
+.SH DESCRIPTION
+.B scs
+displays a large pixel-font clock with a date, a minute progress bar, and
+optional seconds. It supports animated glow, nine color themes, and a static
+mode for scripts and screenshots.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show help and exit.
+.TP
+.BR \-V ", " \-\-version
+Show the version and exit.
+.TP
+.B \-\-static
+Print one frame and exit.
+.TP
+.BI \-\-config " PATH"
+Read configuration from
+.IR PATH .
+The default is
+.IR ~/.config/scs/config.toml .
+.TP
+.B \-\-12h
+Use 12-hour time.
+.TP
+.B \-\-24h
+Use 24-hour time.
+.TP
+.B \-\-seconds
+Show seconds.
+.TP
+.B \-\-no\-seconds
+Hide seconds.
+.TP
+.B \-\-color
+Enable ANSI colors.
+.TP
+.B \-\-no\-color
+Disable ANSI colors.
+.TP
+.BI \-\-theme " NAME"
+Select a color theme. Valid names are neon, sunset, matrix, ice, candy, fire,
+ocean, mono, and rainbow.
+.TP
+.BI \-\-fps " FPS"
+Set the animation rate. Values are clamped to 10\-144.
+.SH KEYS
+.TP
+.B q ", " Esc
+Quit.
+.TP
+.B c
+Cycle the color theme.
+.TP
+.B h
+Toggle 12/24-hour time.
+.TP
+.B s
+Toggle seconds.
+.TP
+.B r
+Reset options to the values loaded at startup.
+.SH FILES
+.TP
+.I ~/.config/scs/config.toml
+Default configuration file. If
+.B XDG_CONFIG_HOME
+is set, the file is read from
+.IR $XDG_CONFIG_HOME/scs/config.toml .
+.SH CONFIGURATION
+The configuration file uses simple
+.I key = value
+lines. Blank lines and text after
+.B #
+are ignored. Command-line options override configuration values.
+.PP
+Supported keys:
+.TP
+.B theme
+Theme name as a quoted or unquoted string.
+.TP
+.B twelve_hour
+Boolean. Use 12-hour time.
+.TP
+.B show_seconds
+Boolean. Show seconds.
+.TP
+.B fps
+Integer animation rate, clamped to 10\-144.
+.TP
+.B color
+Boolean. Enable ANSI colors.
+.PP
+Example:
+.nf
+theme = "matrix"
+twelve_hour = false
+show_seconds = true
+fps = 30
+color = true
+.fi
+.SH THEMES
+neon, sunset, matrix, ice, candy, fire, ocean, mono, and rainbow.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Runtime error.
+.TP
+.B 2
+Invalid usage or configuration.
+.SH LICENSE
+MIT

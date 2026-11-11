@@ -9,7 +9,9 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use std::env;
+use std::fs;
 use std::io::{self, IsTerminal, Write};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
@@ -31,6 +33,128 @@ impl Default for Options {
             palette: Palette::Neon,
             fps: 30,
             no_color: false,
+        }
+    }
+}
+
+#[derive(Default)]
+struct CliOptions {
+    static_mode: bool,
+    twelve_hour: Option<bool>,
+    show_seconds: Option<bool>,
+    palette: Option<Palette>,
+    fps: Option<u64>,
+    no_color: Option<bool>,
+    config: Option<PathBuf>,
+}
+
+impl CliOptions {
+    fn apply(&self, options: &mut Options) {
+        if self.static_mode {
+            options.static_mode = true;
+        }
+        if let Some(value) = self.twelve_hour {
+            options.twelve_hour = value;
+        }
+        if let Some(value) = self.show_seconds {
+            options.show_seconds = value;
+        }
+        if let Some(value) = self.palette {
+            options.palette = value;
+        }
+        if let Some(value) = self.fps {
+            options.fps = value.clamp(10, 144);
+        }
+        if let Some(value) = self.no_color {
+            options.no_color = value;
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct Config {
+    twelve_hour: Option<bool>,
+    show_seconds: Option<bool>,
+    palette: Option<Palette>,
+    fps: Option<u64>,
+    no_color: Option<bool>,
+}
+
+impl Config {
+    fn load(path: &Path) -> Result<Self, String> {
+        let text = fs::read_to_string(path)
+            .map_err(|error| format!("failed to read config '{}': {error}", path.display()))?;
+        Self::parse(&text, &path.display().to_string())
+    }
+
+    fn parse(text: &str, source: &str) -> Result<Self, String> {
+        let mut config = Self::default();
+
+        for (index, raw_line) in text.lines().enumerate() {
+            let line = strip_comment(raw_line).trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let location = format!("{source}:{}", index + 1);
+            let (key, value) = line
+                .split_once('=')
+                .ok_or_else(|| format!("{location}: expected key = value"))?;
+            let key = key.trim();
+            let value = value.trim();
+
+            match key {
+                "theme" => {
+                    config.palette = Some(
+                        parse_theme(value)
+                            .ok_or_else(|| format!("{location}: unknown theme '{value}'"))?,
+                    );
+                }
+                "twelve_hour" => {
+                    config.twelve_hour = Some(
+                        parse_bool(value)
+                            .ok_or_else(|| format!("{location}: expected true or false"))?,
+                    );
+                }
+                "show_seconds" => {
+                    config.show_seconds = Some(
+                        parse_bool(value)
+                            .ok_or_else(|| format!("{location}: expected true or false"))?,
+                    );
+                }
+                "color" => {
+                    let color = parse_bool(value)
+                        .ok_or_else(|| format!("{location}: expected true or false"))?;
+                    config.no_color = Some(!color);
+                }
+                "fps" => {
+                    let fps = value
+                        .parse::<u64>()
+                        .map_err(|_| format!("{location}: invalid fps '{value}'"))?;
+                    config.fps = Some(fps.clamp(10, 144));
+                }
+                _ => return Err(format!("{location}: unknown key '{key}'")),
+            }
+        }
+
+        Ok(config)
+    }
+
+    fn apply(self, options: &mut Options) {
+        if let Some(value) = self.twelve_hour {
+            options.twelve_hour = value;
+        }
+        if let Some(value) = self.show_seconds {
+            options.show_seconds = value;
+        }
+        if let Some(value) = self.palette {
+            options.palette = value;
+        }
+        if let Some(value) = self.fps {
+            options.fps = value.clamp(10, 144);
+        }
+        if let Some(value) = self.no_color {
+            options.no_color = value;
         }
     }
 }
@@ -67,7 +191,7 @@ fn main() {
 }
 
 fn run() -> io::Result<()> {
-    let options = match parse_args() {
+    let cli = match parse_args() {
         Ok(Some(options)) => options,
         Ok(None) => return Ok(()),
         Err(message) => {
@@ -77,6 +201,23 @@ fn run() -> io::Result<()> {
             std::process::exit(2);
         }
     };
+
+    let mut options = Options::default();
+    let config_path = cli.config.clone().or_else(default_config_path);
+
+    if let Some(path) = config_path {
+        if cli.config.is_some() || path.exists() {
+            match Config::load(&path) {
+                Ok(config) => config.apply(&mut options),
+                Err(message) => {
+                    eprintln!("scs: {message}");
+                    std::process::exit(2);
+                }
+            }
+        }
+    }
+
+    cli.apply(&mut options);
 
     let is_terminal = io::stdout().is_terminal();
     let color = is_terminal && !options.no_color && env::var_os("NO_COLOR").is_none();
@@ -172,8 +313,8 @@ fn animate(options: Options) -> io::Result<()> {
     }
 }
 
-fn parse_args() -> Result<Option<Options>, String> {
-    let mut options = Options::default();
+fn parse_args() -> Result<Option<CliOptions>, String> {
+    let mut options = CliOptions::default();
     let mut args = env::args().skip(1);
 
     while let Some(arg) = args.next() {
@@ -187,26 +328,26 @@ fn parse_args() -> Result<Option<Options>, String> {
                 return Ok(None);
             }
             "--static" => options.static_mode = true,
-            "--12h" => options.twelve_hour = true,
-            "--no-seconds" => options.show_seconds = false,
-            "--no-color" => options.no_color = true,
+            "--12h" => options.twelve_hour = Some(true),
+            "--24h" => options.twelve_hour = Some(false),
+            "--seconds" => options.show_seconds = Some(true),
+            "--no-seconds" => options.show_seconds = Some(false),
+            "--color" => options.no_color = Some(false),
+            "--no-color" => options.no_color = Some(true),
+            "--config" => {
+                let value = next_value(&mut args, "--config")?;
+                options.config = Some(PathBuf::from(value));
+            }
             "--theme" => {
                 let value = next_value(&mut args, "--theme")?;
-                options.palette = Palette::ALL
-                    .into_iter()
-                    .find(|palette| palette.name().eq_ignore_ascii_case(&value))
-                    .ok_or_else(|| {
-                        format!(
-                            "unknown theme '{value}'. Choose neon, sunset, matrix, ice, candy, fire, ocean, mono, or rainbow"
-                        )
-                    })?;
+                options.palette = Some(theme_value(&value)?);
             }
             "--fps" => {
                 let value = next_value(&mut args, "--fps")?;
                 let fps = value
                     .parse::<u64>()
                     .map_err(|_| format!("invalid fps '{value}'"))?;
-                options.fps = fps.clamp(10, 144);
+                options.fps = Some(fps.clamp(10, 144));
             }
             _ => return Err(format!("unknown option '{arg}'")),
         }
@@ -218,6 +359,55 @@ fn parse_args() -> Result<Option<Options>, String> {
 fn next_value(args: &mut impl Iterator<Item = String>, option: &str) -> Result<String, String> {
     args.next()
         .ok_or_else(|| format!("{option} requires a value"))
+}
+
+fn theme_value(value: &str) -> Result<Palette, String> {
+    Palette::from_name(value).ok_or_else(|| {
+        format!(
+            "unknown theme '{value}'. Choose neon, sunset, matrix, ice, candy, fire, ocean, mono, or rainbow"
+        )
+    })
+}
+
+fn parse_theme(value: &str) -> Option<Palette> {
+    Palette::from_name(value.trim_matches('"').trim_matches('\''))
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    if value.eq_ignore_ascii_case("true") {
+        Some(true)
+    } else if value.eq_ignore_ascii_case("false") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn strip_comment(line: &str) -> &str {
+    let mut quoted = false;
+    for (index, ch) in line.char_indices() {
+        match ch {
+            '"' => quoted = !quoted,
+            '#' if !quoted => return &line[..index],
+            _ => {}
+        }
+    }
+    line
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    if let Some(config_home) = env::var_os("XDG_CONFIG_HOME") {
+        if !config_home.is_empty() {
+            return Some(PathBuf::from(config_home).join("scs").join("config.toml"));
+        }
+    }
+
+    env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(".config")
+            .join("scs")
+            .join("config.toml")
+    })
 }
 
 fn print_help() {
@@ -234,13 +424,17 @@ fn print_usage() {
     println!("  -h, --help              Show this help");
     println!("  -V, --version           Show the version");
     println!("      --static            Print one frame and exit");
+    println!("      --config <PATH>     Config file (default: ~/.config/scs/config.toml)");
     println!("      --12h               Use 12-hour time");
+    println!("      --24h               Use 24-hour time");
+    println!("      --seconds           Show seconds");
     println!("      --no-seconds        Hide seconds");
+    println!("      --color             Enable ANSI colors");
+    println!("      --no-color          Disable ANSI colors");
     println!(
         "      --theme <NAME>      neon, sunset, matrix, ice, candy, fire, ocean, mono, rainbow"
     );
     println!("      --fps <FPS>         Animation rate, clamped to 10-144");
-    println!("      --no-color          Disable ANSI colors");
     println!();
     println!("KEYS:");
     println!("  q / Esc                 Quit");
@@ -248,4 +442,53 @@ fn print_usage() {
     println!("  h                       Toggle 12/24-hour time");
     println!("  s                       Toggle seconds");
     println!("  r                       Reset options");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_config_values() {
+        let config = Config::parse(
+            "theme = \"matrix\"\ntwelve_hour = true\nshow_seconds = false\nfps = 60\ncolor = false\n",
+            "test",
+        )
+        .unwrap();
+
+        assert_eq!(config.palette, Some(Palette::Matrix));
+        assert_eq!(config.twelve_hour, Some(true));
+        assert_eq!(config.show_seconds, Some(false));
+        assert_eq!(config.fps, Some(60));
+        assert_eq!(config.no_color, Some(true));
+    }
+
+    #[test]
+    fn cli_overrides_config() {
+        let mut options = Options::default();
+        let config = Config::parse("theme = \"matrix\"\nfps = 60\n", "test").unwrap();
+        config.apply(&mut options);
+
+        let cli = CliOptions {
+            palette: Some(Palette::Sunset),
+            fps: Some(30),
+            ..CliOptions::default()
+        };
+        cli.apply(&mut options);
+
+        assert_eq!(options.palette, Palette::Sunset);
+        assert_eq!(options.fps, 30);
+    }
+
+    #[test]
+    fn strips_inline_comments() {
+        let config = Config::parse("theme = \"ice\" # cool\n", "test").unwrap();
+        assert_eq!(config.palette, Some(Palette::Ice));
+    }
+
+    #[test]
+    fn rejects_unknown_config_key() {
+        let error = Config::parse("nope = true\n", "test").unwrap_err();
+        assert!(error.contains("unknown key"));
+    }
 }

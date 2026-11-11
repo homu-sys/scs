@@ -67,6 +67,12 @@ impl Palette {
         Palette::Rainbow,
     ];
 
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|palette| palette.name().eq_ignore_ascii_case(name))
+    }
+
     pub fn next(self) -> Self {
         match self {
             Self::Neon => Self::Sunset,
